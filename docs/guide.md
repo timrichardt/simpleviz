@@ -19,6 +19,9 @@ The README example shows every attribute simpleviz reads.
   ADR, notes), as a path relative to the file, `.md` only. It draws a
   dotted border, and "open md" (`f m`) edits the doc (see
   [Editing docs](#editing-docs)).
+- `:world-model` makes a node a world-model node: the earth, satellites and
+  ground stations a mission plays in, shown in 3D inside the node (see
+  [World model](#world-model)).
 - `:pair` links a node or box to the same thing in another graph file
   (see [Pairs](#pairs)). A paired element gets a ⇄ mark.
 - `:grid [col row]` or `[col row w h]` puts a top-level box on a grid cell
@@ -208,6 +211,52 @@ other elements or follow refs.
   while an agent holds the file's lock.
 - Same path rules as refs: relative to the graph file, never above the
   served folder. Only `.md` files in UTF-8, up to 1 MiB.
+
+## World model
+
+A node whose `:world-model` is a map describes the world a satellite mission
+plays in:
+
+    :nodes {:eo {:name "Earth observation"
+                 :world-model {:satellites {:sentinel-2a {:orbit :leo :altitude 786 :inclination 98.6 :raan 30}
+                                            :galileo-1   {:orbit :meo :inclination 56 :raan 120}
+                                            :relay       {:orbit :geo :lon 9}}
+                               :ground-stations {:kiruna {:name "Kiruna" :lat 67.86 :lon 20.96
+                                                          :min-elevation 5}}}}}
+
+The node is drawn larger, with the setting in 3D under its name: the earth
+in the middle, each satellite on its orbit, the ground stations on the
+surface, and a dashed line wherever a station sees a satellite. Drag the
+globe to turn it (the diagram doesn't pan). The bar at the bottom runs or
+pauses the clock (▶/❚❚, one clock for every world-model node), sets its speed,
+zooms the globe (− +) and resets view and clock (⟲); it shows the time and
+how many contacts there are. Exports draw the globe as it is on screen.
+
+Selected, the node lists its satellites and ground stations in the
+inspector; in an editable file, × removes one and the row under each list
+adds one. Each change rewrites only that entry of the file.
+
+Satellites, keyed by id like nodes:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `:orbit` | from `:altitude`, else `:leo` | `:leo`, `:meo` or `:geo` |
+| `:altitude` | LEO 550, MEO 20200, GEO 35786 | km above the surface |
+| `:inclination` | LEO 53, MEO 55, GEO 0 | degrees, 0–180 |
+| `:raan` | 0 | right ascension of the ascending node, degrees |
+| `:phase` | 0 | where on its orbit it starts, degrees from the ascending node |
+| `:lon` | — | GEO only: the longitude it stays over (replaces `:raan`/`:phase`) |
+| `:name` | the id | label |
+
+Ground stations need `:lat` and `:lon` (degrees); `:min-elevation` (default
+10°) is how high above the horizon a satellite must be to be in contact, and
+`:name` labels it. A new satellite added in the panel gets its class's
+defaults, with its `:raan` (a GEO satellite's `:lon`) 45° from the last one of
+its class, so they don't overlap.
+
+Orbits are ideal circles and the clock starts at T+0 with longitude 0
+facing the x axis — an illustration of the setting, not an ephemeris. An
+entry with a bad value is left out and the panel says why.
 
 ## Following refs
 

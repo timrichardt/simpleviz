@@ -1,5 +1,6 @@
 (ns simpleviz.canvas
   (:require [simpleviz.colors :as colors]
+            [simpleviz.globe :as globe]
             [simpleviz.scene :as scene]
             [simpleviz.svg :as svg]
             [simpleviz.transform :refer [NODE-FONT SUB-FONT]]
@@ -298,6 +299,10 @@
       (set! (.-strokeStyle ctx) (if sel? (:accent @palette) (:sub @palette)))
       (set! (.-lineWidth ctx) 1)
       (.stroke ctx))
+    ;; a world-model node holds its globe under the name, the marks on top
+    (when (:world-model? item)
+      (globe/draw! ctx item @palette (if removed? 0.45 1) text?)
+      (when removed? (set! (.-globalAlpha ctx) 0.45)))
     (when (and text? (some? (:state item)))
       (draw-state-mark ctx item))
     (when (and text? (:pair? item))
@@ -389,6 +394,15 @@
           "node" (draw-node ctx item sel? text?)
           nil)))))
 
+(defn view-rect
+  "The graph-space rect the diagram canvas shows, nil before it exists."
+  []
+  (when-let [el (js/document.getElementById "canvas")]
+    (let [k (:k view)]
+      {:x0 (/ (- 0 (:x view)) k) :y0 (/ (- 0 (:y view)) k)
+       :x1 (/ (- (.-clientWidth el) (:x view)) k)
+       :y1 (/ (- (.-clientHeight el) (:y view)) k)})))
+
 (defn paint! [canvas-el sc2 selected-id]
   (let [ctx (.getContext canvas-el "2d")
         dpr (or (.-devicePixelRatio js/window) 1)
@@ -443,7 +457,12 @@
     (svg/svg-document rec {:width w :height h :background (:bg @palette)
                            :sources sources})))
 
-(defn setup-pan-zoom! [wrap]
+(defn setup-pan-zoom!
+  "Drag to pan and scroll to zoom on wrap. `grab` (optional) is asked at
+  each press with the wrap-relative point: a fn it returns gets the drag
+  instead of the pan, called with the offset from the press in pixels
+  (a world-model node's globe turns that way)."
+  [wrap & [grab]]
   (.addEventListener wrap "wheel"
     (fn [e]
       (when-not (.closest (.-target e) "#details, #banner, #collapsed-panel, #top-right, #diff-legend")
@@ -465,9 +484,13 @@
           ;; NO setPointerCapture here: capturing on pointerdown retargets
           ;; the subsequent click to the wrap, so the canvas onclick
           ;; (selection) would never fire for plain clicks.
-          (reset! drag {:x (.-clientX e) :y (.-clientY e)
-                        :vx (:x view) :vy (:y view) :moved false
-                        :pointer-id (.-pointerId e)}))))
+          (let [rect (.getBoundingClientRect wrap)]
+            (reset! drag {:x (.-clientX e) :y (.-clientY e)
+                          :vx (:x view) :vy (:y view) :moved false
+                          :pointer-id (.-pointerId e)
+                          :grab (when (some? grab)
+                                  (grab (- (.-clientX e) (.-left rect))
+                                        (- (.-clientY e) (.-top rect))))})))))
     (.addEventListener wrap "pointermove"
       (fn [e]
         (when-let [d @drag]
@@ -480,7 +503,9 @@
               ;; accidentally select
               (swap! drag assoc :moved true)
               (.setPointerCapture wrap (:pointer-id d)))
-            (assoc! view :x (+ (:vx d) dx) :y (+ (:vy d) dy))
+            (if-let [g (:grab d)]
+              (when (:moved @drag) (g dx dy))
+              (assoc! view :x (+ (:vx d) dx) :y (+ (:vy d) dy)))
             (request-paint!)))))
     (.addEventListener wrap "pointerup" (fn [_] (reset! drag nil)))
     (.addEventListener wrap "pointercancel" (fn [_] (reset! drag nil))))

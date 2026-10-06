@@ -1,4 +1,5 @@
-(ns simpleviz.transform)
+(ns simpleviz.transform
+  (:require [simpleviz.world-model :as wm]))
 
 ;; Builds the ELK JSON graph from a validated graph. Text measurement is
 ;; injected so this namespace stays DOM-free and testable.
@@ -30,10 +31,14 @@
         node-elk (fn [n]
                    (let [typed? (pos? (.-length (:type n)))
                          w (max (measure (:name n) NODE-FONT)
-                                (if typed? (measure (str "(" (:type n) ")") SUB-FONT) 0))]
+                                (if typed? (measure (str "(" (:type n) ")") SUB-FONT) 0))
+                         ;; a world-model node holds its globe and control bar
+                         world-model? (some? (wm/world-model-of (:attrs n)))]
                      {:id (str "n:" (:id n))
-                      :width (+ (js/Math.ceil w) 24)
-                      :height (if typed? 44 30)}))
+                      :width (cond-> (+ (js/Math.ceil w) 24)
+                               world-model? (max wm/NODE-MIN-W))
+                      :height (cond-> (if typed? 44 30)
+                                world-model? (+ wm/GLOBE-H wm/BAR-H))}))
         box-elk (fn box-elk [b]
                   ;; empty boxes (e.g. compare-mode removed shells) must not
                   ;; reach ELK as childless compounds — those lay out as 0×0

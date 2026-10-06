@@ -139,3 +139,22 @@
     (assert/deepEqual
      (:attrs (hover-tip {:kind "node" :id "n:a" :name "a" :attrs {:components 3}}))
      [["components" 3]])))
+
+(def world-model-node {:kind "node" :id "n:eo" :x 0 :y 0 :w 300 :h 320 :name "EO"
+                   :world-model? true :attrs {"world-model" {"satellites" {}} "owner" "ops"}})
+
+(test "a world-model node's control-bar buttons hit ahead of the node, when legible"
+  (fn []
+    (let [s (scene [world-model-node])
+          ;; the bar's first button (play) sits at x 6.., y 297..315
+          b (hit-test s {:x 10 :y 300} 8 1)]
+      (assert/deepEqual b {:kind "world-model-button" :node-id "n:eo" :action "play"})
+      (assert/equal (hover-title b) "run / pause the clock")
+      ;; the globe itself is the node
+      (assert/equal (:id (hit-test s {:x 150 :y 150} 8 1)) "n:eo")
+      ;; zoomed out past legibility: the node
+      (assert/equal (:id (hit-test s {:x 10 :y 300} 80 0.1)) "n:eo"))))
+
+(test "a world-model node's tooltip leaves its :world-model out"
+  (fn []
+    (assert/deepEqual (:attrs (hover-tip world-model-node)) [["owner" "ops"]])))

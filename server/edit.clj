@@ -6,6 +6,7 @@
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
             [rewrite-clj.node :as n]
+            [rewrite-clj.parser :as p]
             [rewrite-clj.zip :as z]
             [themes]))
 
@@ -91,22 +92,79 @@
                  (if (= key-text (z/string c)) c (recur (z/up c))))]
     (z/remove at-key)))
 
-(defn set-attr [text {:keys [section id attr value fallback]}]
-  (let [v (edn-value value fallback)
-        entry (entry-val (zroot text) section id)]
-    (z/root-string
-     (if (nil? (z/sexpr entry))
-       (z/replace entry {attr v})
-       (if-let [av (find-val entry #(= % attr))]
-         (z/replace av v)
-         (-> entry (z/append-child attr) (z/append-child v)))))))
+(defn- path-key-pred
+  "Matches a nested map key written as keyword or string, like ids."
+  [k]
+  (let [nm (ident->str k)]
+    (fn [s] (and (or (keyword? s) (string? s)) (= (ident->str s) nm)))))
 
-(defn del-attr [text {:keys [section id attr]}]
-  (let [entry (entry-val (zroot text) section id)]
-    (when (nil? (z/sexpr entry)) (fail! (str "no attribute " attr " to delete")))
-    (let [k (or (find-key entry #(= % attr))
-                (fail! (str "no attribute " attr " to delete")))]
-      (z/root-string (remove-pair k)))))
+(defn- path-label [ks] (str/join " " (map ident->str ks)))
+
+(defn- nest
+  "Value node v inside one map per key of ks, outermost first."
+  [ks v]
+  (reduce (fn [inner k] (n/map-node [(n/coerce k) (n/spaces 1) inner])) v (reverse ks)))
+
+(defn- entry-indent
+  "The column a multi-line map's entries start at — the spaces after its
+  last line break — or nil for a map written on one line."
+  [m]
+  (let [cs (vec (n/children (z/node m)))
+        i (last (keep-indexed (fn [i c] (when (#{:newline :comment} (n/tag c)) i)) cs))]
+    (when (some? i)
+      (let [c (get cs (inc i))]
+        (if (and (some? c) (= :whitespace (n/tag c))) (count (n/string c)) 0)))))
+
+(defn- set-in-map
+  "Set the value at key path ks (the attribute, then nested keys, all as
+  written to the file) inside the map at zloc m, creating missing maps
+  on the way; returns a zloc in the same tree. A nil value counts as an
+  empty map; any other non-map on the way fails. `seen`: the keys above
+  m. v is a value, or for a nested path the node of the text as sent: a
+  new entry there goes on its own line in a multi-line map."
+  [m ks v seen]
+  (let [[k & more] ks]
+    (cond
+      (nil? (z/sexpr m)) (z/replace m (if (n/node? v) (nest ks v) (assoc-in {} ks v)))
+      (not (map? (z/sexpr m))) (fail! (if (empty? seen)
+                                        "the element's value is not a map"
+                                        (str (path-label seen) " is not a map")))
+      :else
+      (if-let [av (find-val m (if (empty? seen) #(= % k) (path-key-pred k)))]
+        (if more (set-in-map av more v (conj seen k)) (z/replace av v))
+        (let [new-v (cond (nil? more) v (n/node? v) (nest more v) :else (assoc-in {} more v))
+              indent (when (seq seen) (entry-indent m))]
+          (if (some? indent)
+            (-> m (z/append-child* (n/newlines 1)) (z/append-child* (n/spaces indent))
+                (z/append-child* (n/coerce k)) (z/append-child* (n/spaces 1))
+                (z/append-child* (n/coerce new-v)))
+            (-> m (z/append-child k) (z/append-child new-v))))))))
+
+(defn set-attr
+  "Set attribute attr of an element to value; with :path (keys, may be
+  empty) the value lands that deep inside the attribute's map instead,
+  e.g. attr :world-model and path [\"satellites\" \"sat-1\"], written as sent
+  rather than reprinted."
+  [text {:keys [section id attr path value fallback]}]
+  (let [v (edn-value value fallback)
+        v (if (and (seq path) (not (string? v))) (p/parse-string value) v)
+        entry (entry-val (zroot text) section id)]
+    (z/root-string (set-in-map entry (cons attr (map ident-node path)) v []))))
+
+(defn del-attr
+  "Remove attribute attr of an element; with :path the key that deep
+  inside the attribute's map instead."
+  [text {:keys [section id attr path]}]
+  (let [ks (cons attr path)
+        missing #(fail! (str "no attribute " (path-label ks) " to delete"))]
+    (loop [m (entry-val (zroot text) section id)
+           [k & more] ks
+           top? true]
+      (when-not (map? (z/sexpr m)) (missing))
+      (let [kloc (or (find-key m (if top? #(= % k) (path-key-pred k))) (missing))]
+        (if more
+          (recur (z/right kloc) more false)
+          (z/root-string (remove-pair kloc)))))))
 
 (defn- parsed [text]
   (try (edn/read-string text) (catch Exception _ (fail! "file does not parse as EDN"))))
@@ -443,6 +501,10 @@
   straight into the file, so an unvalidated name (e.g. one containing a
   space) would corrupt the EDN on write."
   [op]
+  (when (and (some? (:path op))
+             (not (and (sequential? (:path op))
+                       (every? #(and (string? %) (not (str/blank? %))) (:path op)))))
+    (fail! (str "invalid attribute path " (pr-str (:path op)))))
   (cond-> op
     (some? (:section op)) (update :section keyword)
     (some? (:attr op)) (update :attr

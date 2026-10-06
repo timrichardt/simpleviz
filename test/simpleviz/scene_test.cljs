@@ -265,6 +265,13 @@
     (assert/equal (:md-ref? (node-with {:md-ref 3})) false)
     (assert/equal (:md-ref? (node-with {:ref "sub/api.edn"})) false)))
 
+(test "a node whose :world-model is a map is flagged :world-model?"
+  (fn []
+    (assert/equal (:world-model? (node-with {:world-model {}})) true)
+    (assert/equal (:world-model? (node-with {:world-model {:satellites {}}})) true)
+    (assert/equal (:world-model? (node-with {:world-model true})) false)
+    (assert/equal (:world-model? (node-with {})) false)))
+
 (defn- box-with [attrs]
   (let [g (assoc-in graph [:boxes-by-name "grp" :attrs] attrs)
         sc (build-scene {:layout layout :graph g :colors colors})]

@@ -62,6 +62,81 @@
   (is (= "{:nodes {:web {:name \"Web\" ;; keep me\n}\n         :api nil}\n :edges {[:web :api] {:direction :->}}}"
          (edit/del-attr nodes-file {:section :nodes :id "web" :attr :type}))))
 
+(def world-model-file
+  "{:nodes {:m {:world-model {:satellites {:sat-1 {:orbit :leo}} ; first
+                        \"ground-stations\" {}}}}}")
+
+(deftest set-attr-path-replaces-nested-value-keeping-the-rest
+  (is (= "{:nodes {:m {:world-model {:satellites {:sat-1 {:orbit :geo}} ; first
+                        \"ground-stations\" {}}}}}"
+         (edit/set-attr world-model-file {:section :nodes :id "m" :attr :world-model
+                                      :path ["satellites" "sat-1"]
+                                      :value "{:orbit :geo}" :fallback false}))))
+
+(deftest set-attr-path-appends-and-matches-string-keys
+  (let [out (edit/set-attr world-model-file {:section :nodes :id "m" :attr :world-model
+                                         :path ["ground-stations" "svalbard"]
+                                         :value "{:lat 78.2 :lon 15.4}" :fallback false})]
+    (is (= {:satellites {:sat-1 {:orbit :leo}}
+            "ground-stations" {:svalbard {:lat 78.2 :lon 15.4}}}
+           (get-in (clojure.edn/read-string out) [:nodes :m :world-model])))
+    (is (clojure.string/includes? out "; first") "comments elsewhere survive")))
+
+(deftest set-attr-path-writes-the-value-as-sent-on-its-own-line
+  (let [ind (apply str (repeat 36 " "))]
+    ;; a multi-line map gets the new entry on a line of its own, aligned
+    (is (= (str "{:nodes {:m {:world-model {:satellites {:sat-1 {:orbit :leo}\n" ind ":sat-0 nil\n"
+                ind ":sat-2 {:orbit :geo :lon 19.2}}}}}}")
+           (edit/set-attr (str "{:nodes {:m {:world-model {:satellites {:sat-1 {:orbit :leo}\n" ind ":sat-0 nil}}}}}")
+                          {:section :nodes :id "m" :attr :world-model :path ["satellites" "sat-2"]
+                           :value "{:orbit :geo :lon 19.2}" :fallback false}))))
+  ;; a one-line map stays on one line; the value is written as sent, no commas
+  (is (= "{:nodes {:m {:world-model {:satellites {:sat-1 {:orbit :leo} :sat-2 {:orbit :geo :lon 19.2}}}}}}"
+         (edit/set-attr "{:nodes {:m {:world-model {:satellites {:sat-1 {:orbit :leo}}}}}}"
+                        {:section :nodes :id "m" :attr :world-model :path ["satellites" "sat-2"]
+                         :value "{:orbit :geo :lon 19.2}" :fallback false})))
+  (is (= "{:nodes {:a {:world-model {:satellites {:s {:orbit :meo}}}}}}"
+         (edit/set-attr "{:nodes {:a {}}}" {:section :nodes :id "a" :attr :world-model
+                                            :path ["satellites" "s"]
+                                            :value "{:orbit :meo}" :fallback false}))
+      "missing maps are created around the value as sent"))
+
+(deftest set-attr-path-creates-missing-maps
+  (is (= {:world-model {:satellites {:s {:orbit :meo}}}}
+         (get-in (clojure.edn/read-string
+                  (edit/set-attr small-file {:section :nodes :id "a" :attr :world-model
+                                             :path ["satellites" "s"]
+                                             :value "{:orbit :meo}" :fallback false}))
+                 [:nodes :a])))
+  (is (= {:satellites {:s 1}}
+         (get-in (clojure.edn/read-string
+                  (edit/set-attr "{:nodes {:a {:world-model nil}}}"
+                                 {:section :nodes :id "a" :attr :world-model
+                                  :path ["satellites" "s"] :value "1" :fallback false}))
+                 [:nodes :a :world-model])))
+  (is (thrown-with-msg? Exception #"world-model is not a map"
+        (edit/set-attr "{:nodes {:a {:world-model true}}}"
+                       {:section :nodes :id "a" :attr :world-model
+                        :path ["satellites"] :value "{}" :fallback false}))))
+
+(deftest del-attr-path-removes-nested-key
+  (is (= {:satellites {} "ground-stations" {}}
+         (get-in (clojure.edn/read-string
+                  (edit/del-attr world-model-file {:section :nodes :id "m" :attr :world-model
+                                               :path ["satellites" "sat-1"]}))
+                 [:nodes :m :world-model])))
+  (is (thrown-with-msg? Exception #"no attribute world-model satellites ghost to delete"
+        (edit/del-attr world-model-file {:section :nodes :id "m" :attr :world-model
+                                     :path ["satellites" "ghost"]}))))
+
+(deftest apply-ops-rejects-invalid-path
+  (is (= {:error "invalid attribute path [\"\"]"}
+         (edit/apply-ops small-file [{:op "set-attr" :section "nodes" :id "a" :attr "x"
+                                       :path [""] :value "1" :fallback false}])))
+  (is (= {:error "invalid attribute path \"x\""}
+         (edit/apply-ops small-file [{:op "del-attr" :section "nodes" :id "a" :attr "x"
+                                       :path "x"}]))))
+
 (deftest unknown-targets-fail-with-named-errors
   (is (thrown-with-msg? Exception #"unknown node \"ghost\""
         (edit/set-attr nodes-file {:section :nodes :id "ghost" :attr :a :value "1" :fallback false})))

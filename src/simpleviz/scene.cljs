@@ -1,5 +1,6 @@
 (ns simpleviz.scene
-  (:require [simpleviz.editor :refer [ref-of]]))
+  (:require [simpleviz.editor :refer [ref-of]]
+            [simpleviz.world-model :as wm]))
 
 ;; layout + graph + type-color slots -> flat, back-to-front draw list with absolute
 ;; coordinates: boxes, edges, edge labels, nodes. Pure data; the canvas
@@ -107,7 +108,8 @@
                              (pair-fields box)))
                (.set origins (:id child) {:x x :y y})
                (walk child x y))
-             (let [node (get (:nodes graph) (.slice (:id child) 2))]
+             (let [node (get (:nodes graph) (.slice (:id child) 2))
+                   ms (wm/world-model-of (:attrs node))]
                (.push nodes (merge {:kind "node" :id (:id child)
                                     :x x :y y :w (:width child) :h (:height child)
                                     :bbox (rect-bbox x y (:width child) (:height child))
@@ -116,6 +118,9 @@
                                     :attrs (:attrs node)
                                     :ref? (some? (ref-of node))
                                     :md-ref? (some? (ref-of node :md-ref))
+                                    :world-model? (some? ms)
+                                    ;; parsed once here, painted every frame
+                                    :world-model (when (some? ms) (wm/parse ms))
                                     :state (node-state node)
                                     :diff (:diff node) :changed (:changed node)}
                              (pair-fields node))))))))

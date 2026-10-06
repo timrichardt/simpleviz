@@ -1,5 +1,6 @@
 (ns simpleviz.hit
   (:require [simpleviz.scene :as scene]
+            [simpleviz.world-model :as wm]
             [simpleviz.format :refer [visible-attrs]]))
 
 ;; Pure hit-testing over the scene display list. All coordinates in graph
@@ -53,6 +54,7 @@
     "node" (.slice (:id item) 2)
     "box" (.slice (:id item) 2)
     "collapse-button" (.slice (:box-id item) 2)
+    "world-model-button" (wm/button-title (:action item))
     "edge" (str "[" (:source item) " " (:target item) "]")
     nil))
 
@@ -66,7 +68,9 @@
         nm (:name item)]
     (if (some? t)
       {:title (if (and (string? nm) (pos? (.-length nm))) nm t)
-       :attrs (filterv (fn [[k _]] (not= k "name")) (visible-attrs item))}
+       ;; a world-model node shows its :world-model itself
+       :attrs (filterv (fn [[k _]] (and (not= k "name") (not (and (= k "world-model") (:world-model? item)))))
+                       (visible-attrs item))}
       nil)))
 
 (defn hit-test
@@ -75,7 +79,9 @@
   line, then boxes innermost-first (reverse draw order). Labeled edges
   are deliberately NOT selectable via their line. A box's collapse button
   (drawn only when text is legible, see scene/TEXT-MIN-PX) yields
-  {:kind \"hide-button\" :box-id ..}. The 3-arity derives the zoom from
+  {:kind \"hide-button\" :box-id ..}, a world-model node's control-bar button
+  (legible too) {:kind \"world-model-button\" :node-id .. :action ..}, ahead
+  of the node. The 3-arity derives the zoom from
   tol (the app passes tol = 8/k)."
   ([scene p tol] (hit-test scene p tol (/ 8 tol)))
   ([scene p tol k]
@@ -87,7 +93,14 @@
         ;; every click is the dominant cost at 10k edges
         edge-of (fn [id] (some (fn [e] (when (= (:id e) id) e)) edges))
         labeled (js/Set. (mapv (fn [l] (:edge-id l)) labels))]
-    (or (some (fn [it] (when (in-rect? p (:x it) (:y it) (:w it) (:h it)) it))
+    (or (when (>= (* k 11) scene/TEXT-MIN-PX)
+          (some (fn [it]
+                  (when (and (:world-model? it) (in-rect? p (:x it) (:y it) (:w it) (:h it)))
+                    (some (fn [b] (when (in-rect? p (:x b) (:y b) (:w b) (:h b))
+                                    {:kind "world-model-button" :node-id (:id it) :action (:action b)}))
+                          (:buttons (wm/node-layout it)))))
+                (by-kind "node")))
+        (some (fn [it] (when (in-rect? p (:x it) (:y it) (:w it) (:h it)) it))
               (by-kind "node"))
         (some (fn [l] (when (in-rect? p (- (:x l) 3) (- (:y l) 3)
                                       (+ (:w l) 6) (+ (:h l) 6))

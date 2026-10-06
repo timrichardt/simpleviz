@@ -324,3 +324,14 @@
       (assert/equal (get-in out [:children 0 :id]) "n:web")
       ;; the input is left alone
       (assert/equal (get-in layout [:children 1 :children 0 :id]) "n:api"))))
+
+(test "a world-model node is laid out big enough for its globe and control bar"
+  (fn []
+    (let [g (graph {:nodes {"eo" (assoc (node "eo" "world-model") :attrs {"world-model" {}})
+                            "x" (assoc (node "x") :attrs {"world-model" true})}})
+          elk (to-elk g measure)
+          by-id (fn [id] (first (filterv (fn [c] (= (:id c) id)) (:children elk))))]
+      (assert/equal (:width (by-id "n:eo")) 300)
+      (assert/equal (:height (by-id "n:eo")) (+ 44 250 26))
+      ;; not a map: an ordinary node
+      (assert/equal (:height (by-id "n:x")) 30))))

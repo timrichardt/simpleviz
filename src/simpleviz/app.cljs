@@ -11,6 +11,8 @@
             [simpleviz.png :as png]
             [simpleviz.editor :as editor]
             [simpleviz.grid :as grid]
+            [simpleviz.world-model :as wm]
+            [simpleviz.globe :as globe]
             [themes :as themes]))
 
 (def elk (js/ELK.))
@@ -51,6 +53,9 @@
                   :help false :export-menu false :disconnected false
                   ;; the open :md-ref doc (open-md!), nil when the panel is closed
                   :md nil
+                  ;; the inspector's world-model form: the orbit class picked
+                  ;; for a new satellite, and why the last add was refused
+                  :world-model-orbit "leo" :world-model-error nil
                   :nav (editor/parse-nav js/location.search) :nav-error nil
                   ;; your theme (#115), for files without :theme
                   :theme-pref (stored-theme)
@@ -67,7 +72,8 @@
     (if (some? f) (str "?file=" (js/encodeURIComponent f)) "")))
 
 (defn- on-select [payload]
-  (swap! state assoc :selected payload :editing nil :id-entry nil :chord nil :nav-error nil))
+  (swap! state assoc :selected payload :editing nil :id-entry nil :chord nil :nav-error nil
+         :world-model-error nil))
 
 (defn- start-pick! [pick hint]
   (swap! state assoc :pick pick :pick-hint hint :chord nil))
@@ -82,7 +88,7 @@
   (swap! state assoc :id-entry nil))
 
 (declare relayout! post-edit! delete! current-edit-target-editable? follow-ref! navigate!
-         open-md! save-md! close-md!)
+         open-md! save-md! close-md! world-model-view)
 
 ;; layouts per collapsed-set, so expanding (or re-collapsing a seen
 ;; combination) is instant instead of a multi-second ELK run; demoted
@@ -501,6 +507,7 @@
                           (str (fmt-val k (:old v)) " → " (fmt-val k (:new v)))]])
                       (js/Object.entries (:changed sel))))])
      (pairs-view sel)
+     (world-model-view st sel editable)
      (into [:dl]
            (concat
             (when (not= (:kind sel) "edge")
@@ -758,6 +765,7 @@
           (cond
             (nil? item) (cancel-pick!)
             (= (:kind item) "collapse-button") nil
+            (= (:kind item) "world-model-button") nil
             :else (let [parent (get (:parent-of (:graph @state)) (:id item))
                         ops (editor/pick-ops pick (assoc item :parent parent))]
                     (when (some? ops)
@@ -766,8 +774,10 @@
                       (if (= (:mode pick) "connect")
                         (swap! state assoc :id-entry {:for "edge" :ops ops :text ""})
                         (post-edit! ops)))))
-          (if (= (:kind item) "collapse-button")
-            (toggle-collapse! (.slice (:box-id item) 2))
+          (case (:kind item)
+            "collapse-button" (toggle-collapse! (.slice (:box-id item) 2))
+            "world-model-button" (do (globe/press! (:node-id item) (:action item))
+                                 (canvas/request-paint!))
             (on-select (when (some? item) (item->payload item)))))))}])
 
 (defn- current-edit-target-editable? [st]
@@ -797,7 +807,8 @@
       "Edit"
       "When the served file is editable EDN, the floating toolbar at the bottom holds the tools for the current selection: delete, edge direction, and pick modes such as \"add edge\" (click the other element on the canvas, then name the edge; Esc cancels). New nodes and boxes are created by name: the prompt types a name, and the id is derived from it — lowercased, illegal characters turned into dashes; name::type also sets the type. With nothing selected it creates a standalone node. A :ref attribute naming another graph file (relative path) makes \"follow ref\" open it — in a suffix comparison (simpleviz graph.edn next) it opens that file's own comparison; the trail at the top leads back. Following a ref to an .edn file that does not exist yet creates it as an empty graph — in a comparison the side picked by the old|new toggle."
       "In the inspector, click a value or its ✎ to edit it inline — Enter commits, Shift+Enter inserts a line break, Escape cancels. × deletes an attribute; the key/value row at the bottom adds one. Ctrl+Z or ↶ undoes the last edit."
-      "\"open md\" (f m) opens the markdown file a node's or box's :md-ref names in a text panel on the right; ⤢ makes it fill the window, Esc docks it again. Ctrl+S or Save writes it, and so does closing it (×) or opening another; a missing file is created on the first save. If the file changes on disk while you have unsaved edits, the panel says so — Reload takes the file, Overwrite keeps yours.")
+      "\"open md\" (f m) opens the markdown file a node's or box's :md-ref names in a text panel on the right; ⤢ makes it fill the window, Esc docks it again. Ctrl+S or Save writes it, and so does closing it (×) or opening another; a missing file is created on the first save. If the file changes on disk while you have unsaved edits, the panel says so — Reload takes the file, Overwrite keeps yours."
+      "A node with a :world-model map ({:satellites {..} :ground-stations {..}}) shows that world in 3D inside the diagram: the earth, the satellites on their LEO, MEO or GEO orbits and the ground stations; a dashed line joins a station and a satellite it sees. Drag the globe to turn it; the bar below runs or pauses the clock, sets its speed, zooms (− +) and resets (⟲). Select the node to add and remove satellites and stations in the inspector.")
      (help-section
       "Keys"
       "Two-key chords act on the selection, when no text field has focus (the toolbar buttons show them): d d delete · e 1/2/3/4 edge direction → ← ↔ — · c s / c t change an edge's source / target · a e add edge · a b add to box (node) or add a box as member (box) · a n add a node as member (box) — either moves it out of the box it was in · n n new node (connected to the selected node, or inside the selected box — c n too) · n b new box around the selection · r r rename the id · r n take a node out of the selected box · r b take the selected node out of its box · f r follow the selection's :ref · f p follow the selection's pair · f m open the selection's :md-ref doc (Ctrl+S saves it). Esc cancels a pending chord; ? toggles this help; Ctrl+Z undoes.")
@@ -872,6 +883,166 @@
      (item "PNG" "image" export-png!)
      (item "SVG" "vector" export-svg!)
      [:div {:class "em-note"} "Both embed the source EDN."]]))
+
+;; ---- world-model nodes (:world-model) ----
+
+(defn- input-text [id]
+  (if-let [el (js/document.getElementById id)] (.-value el) ""))
+
+(defn- clear-inputs! [ids]
+  (doseq [id ids]
+    (when-let [el (js/document.getElementById id)] (set! (.-value el) ""))))
+
+(defn- ^:async add-world-model-entry!
+  "Add a satellite (k \"satellites\") or ground station (\"ground-stations\")
+  to the selected world-model node from the inspector's add form: an id
+  derived from the name (or numbered), the settings from the inputs; a
+  bad input explains itself above the form."
+  [sel k]
+  (let [id (.slice (:elk-id sel) 2)
+        raw (wm/world-model-of (:attrs sel))
+        sec (fn [k] (let [v (get raw k)] (if (map? v) v {})))
+        sats? (= k "satellites")
+        orbit (or (:world-model-orbit @state) "leo")
+        nm (input-text (if sats? "sat-name" "gs-name"))
+        {new-id :id id-error :error} (wm/new-id nm (js/Object.keys (sec k)) (if sats? "sat" "gs"))
+        {:keys [edn error]} (if sats?
+                              (wm/satellite-settings
+                               orbit {:name nm :inclination (input-text "sat-a")
+                                      :raan (input-text "sat-b") :lon (input-text "sat-a")}
+                               (count (filter (fn [[_ v]] (= orbit (.toLowerCase (str (get v "orbit")))))
+                                              (js/Object.entries (sec "satellites")))))
+                              (wm/station-settings {:name nm :lat (input-text "gs-lat")
+                                                         :lon (input-text "gs-lon")}))
+        problem (or id-error error)]
+    (if (some? problem)
+      (swap! state assoc :world-model-error problem)
+      (do (swap! state assoc :world-model-error nil)
+          (js-await (post-edit! [(wm/set-entry-op id k new-id edn)]))
+          (when (nil? (:edit-error @state))
+            (clear-inputs! (if sats? ["sat-name" "sat-a" "sat-b"] ["gs-name" "gs-lat" "gs-lon"])))))))
+
+(defn- remove-btn [id k entry-id]
+  [:button {:class "attr-btn attr-del" :type "button" :title "Remove"
+            :on-click (fn [e] (.stopPropagation e)
+                        (post-edit! [(wm/remove-entry-op id k entry-id)]))}
+   "×"])
+
+(defn- add-on-enter [sel k]
+  (fn [e] (when (= (.-key e) "Enter") (add-world-model-entry! sel k))))
+
+(defn- add-btn [sel k]
+  [:button {:class "attr-add-btn" :type "button" :title "Add"
+            :on-click (fn [e] (.stopPropagation e) (add-world-model-entry! sel k))}
+   "+"])
+
+(defn- satellite-rows [st sel id parsed editable]
+  (let [orbit (or (:world-model-orbit st) "leo")
+        geo? (= orbit "geo")
+        dflt (get wm/ORBITS orbit)]
+    [:div {:class "world-model-section"}
+     [:div {:class "world-model-head"} (str "satellites (" (count (:satellites parsed)) ")")]
+     (into [:div {:class "world-model-rows"}]
+           (mapv (fn [sat]
+                   [:div {:key (:id sat) :class "world-model-row"}
+                    [:span {:class "world-model-dot" :style {:background (get globe/CLASS-COLORS (:orbit sat))}}]
+                    [:span {:class "world-model-name" :title (:id sat)} (:name sat)]
+                    [:span {:class "world-model-meta"}
+                     (str (:label (get wm/ORBITS (:orbit sat))) " · " (:altitude sat) " km · "
+                          (:inclination sat) "° · " (wm/fmt-period (:period sat)))]
+                    (when editable (remove-btn id "satellites" (:id sat)))])
+                 (:satellites parsed)))
+     (when editable
+       [:div {:class "world-model-add"}
+        [:input {:id "sat-name" :type "text" :placeholder "name" :on-keydown (add-on-enter sel "satellites")}]
+        (into [:select {:id "sat-orbit" :title "orbit class"
+                        :on-change (fn [e] (swap! state assoc :world-model-orbit (.. e -target -value)))}]
+              (mapv (fn [o] [:option {:value o :selected (= o orbit)} (:label (get wm/ORBITS o))])
+                    wm/ORBIT-ORDER))
+        [:input {:id "sat-a" :type "text" :class "world-model-num" :on-keydown (add-on-enter sel "satellites")
+                 :placeholder (if geo? "lon °" (str "incl. " (:inclination dflt) "°"))
+                 :title (if geo? "longitude it stays over" "inclination, degrees (blank: class default)")}]
+        (when-not geo?
+          [:input {:id "sat-b" :type "text" :class "world-model-num" :on-keydown (add-on-enter sel "satellites")
+                   :placeholder "RAAN °" :title "right ascension of the ascending node, degrees (blank: spread)"}])
+        (add-btn sel "satellites")])]))
+
+(defn- station-rows [sel id parsed editable]
+  [:div {:class "world-model-section"}
+   [:div {:class "world-model-head"} (str "ground stations (" (count (:stations parsed)) ")")]
+   (into [:div {:class "world-model-rows"}]
+         (mapv (fn [gs]
+                 [:div {:key (:id gs) :class "world-model-row"}
+                  [:span {:class "world-model-tri"} "▲"]
+                  [:span {:class "world-model-name" :title (:id gs)} (:name gs)]
+                  [:span {:class "world-model-meta"}
+                   (str (:lat gs) "°, " (:lon gs) "° · mask " (:min-elevation gs) "°")]
+                  (when editable (remove-btn id "ground-stations" (:id gs)))])
+               (:stations parsed)))
+   (when editable
+     [:div {:class "world-model-add"}
+      [:input {:id "gs-name" :type "text" :placeholder "name" :on-keydown (add-on-enter sel "ground-stations")}]
+      [:input {:id "gs-lat" :type "text" :class "world-model-num" :placeholder "lat °"
+               :on-keydown (add-on-enter sel "ground-stations")}]
+      [:input {:id "gs-lon" :type "text" :class "world-model-num" :placeholder "lon °"
+               :on-keydown (add-on-enter sel "ground-stations")}]
+      (add-btn sel "ground-stations")])])
+
+(defn- world-model-view
+  "The inspector's world-model section for a selected world-model node: its
+  satellites and ground stations, with add and remove when editable;
+  nil for any other selection."
+  [st sel editable]
+  (when-let [raw (when (= (:kind sel) "node") (wm/world-model-of (:attrs sel)))]
+    (let [id (.slice (:elk-id sel) 2)
+          parsed (wm/parse raw)]
+      [:div {:class "details-world-model"}
+       (when (some? (:world-model-error st))
+         [:div {:class "world-model-error"} (:world-model-error st)])
+       (satellite-rows st sel id parsed editable)
+       (station-rows sel id parsed editable)
+       (when (seq (:problems parsed))
+         (into [:ul {:class "world-model-problems"}]
+               (mapv (fn [p] [:li {:key p} p]) (:problems parsed))))])))
+
+;; the scene's world-model nodes, found once per scene: the animation asks
+;; every frame whether one is on screen
+(def ^:private world-model-items (atom [nil []]))
+
+(defn- scene-world-models [sc]
+  (let [[seen items] @world-model-items]
+    (if (identical? seen sc)
+      items
+      (let [items (filterv (fn [it] (:world-model? it)) (or (:items sc) []))]
+        (reset! world-model-items [sc items])
+        items))))
+
+(defn- world-model-frame!
+  "Run the clock and repaint while a world-model node is on screen."
+  [now]
+  (let [ms (scene-world-models (:scene @state))]
+    (when (and (seq ms) (globe/advance! now))
+      (let [vr (canvas/view-rect)]
+        (when (and (some? vr) (some (fn [it] (scene/visible? it vr)) ms))
+          (canvas/request-paint!)))))
+  (js/requestAnimationFrame world-model-frame!))
+
+(defn- globe-grab
+  "The pan/zoom grab hook: a press on a world-model node's globe (outside a
+  pick) turns that globe instead of panning."
+  [mx my]
+  (when (nil? (:pick @state))
+    (let [p (hit/client->graph canvas/view mx my)
+          item (some (fn [it]
+                       (let [g (:globe (wm/node-layout it))]
+                         (when (and (>= (:x p) (:x g)) (<= (:x p) (+ (:x g) (:w g)))
+                                    (>= (:y p) (:y g)) (<= (:y p) (+ (:y g) (:h g))))
+                           it)))
+                     (scene-world-models (:scene @state)))]
+      (when (some? item)
+        (let [id (:id item)
+              c0 (globe/camera id)]
+          (fn [dx dy] (globe/update-camera! id (fn [_] (globe/turn c0 dx dy)))))))))
 
 (defn- md-panel [st]
   (let [md (:md st)]
@@ -1664,7 +1835,8 @@
 (set! (.-simplevizExport js/window) headless-export)
 (apply-theme! (effective-theme (:graph @state) (:theme-pref @state) (:theme @state)))
 (add-watch state :render (fn [_ _ _ _] (rerender!)))
-(canvas/setup-pan-zoom! (js/document.getElementById "canvas-wrap"))
+(canvas/setup-pan-zoom! (js/document.getElementById "canvas-wrap") globe-grab)
+(js/requestAnimationFrame world-model-frame!)
 (rerender!)
 (tick)
 (js/setInterval tick 1000)
