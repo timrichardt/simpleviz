@@ -335,3 +335,14 @@
       (assert/equal (:height (by-id "n:eo")) (+ 44 250 26))
       ;; not a map: an ordinary node
       (assert/equal (:height (by-id "n:x")) 30))))
+
+(test "a database node is taller by its cylinder's two rims"
+  (fn []
+    (let [g (graph {:nodes {"db" (node "db" "database")
+                            "Db" (node "Db" "Database")
+                            "svc" (node "svc" "service")}})
+          elk (to-elk g measure)
+          by-id (fn [id] (first (filterv (fn [c] (= (:id c) id)) (:children elk))))]
+      (assert/equal (:height (by-id "n:db")) (+ 44 12))
+      (assert/equal (:height (by-id "n:Db")) (+ 44 12) "the type matches in any case")
+      (assert/equal (:height (by-id "n:svc")) 44))))

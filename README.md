@@ -62,7 +62,7 @@ and write locks.
                    :md-ref "docs/api.md" ; the markdown doc describing it (node or box) — dotted border; "open md" edits it
                    :state :in-progress}  ; :new | :in-progress | :blocked | :done — a mark on the node's corner
              :web {:type "frontend"}
-             :db  {:type "database"}
+             :db  {:type "database"}     ; drawn as the database cylinder
              :eo  {:world-model          ; the world a mission plays in, shown in 3D inside the node
                    {:satellites {:s1 {:orbit :leo :inclination 98}}     ; :leo | :meo | :geo
                     :ground-stations {:kiruna {:lat 67.86 :lon 20.96}}}}}

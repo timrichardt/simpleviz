@@ -1,5 +1,6 @@
 (ns simpleviz.transform
-  (:require [simpleviz.world-model :as wm]))
+  (:require [simpleviz.world-model :as wm]
+            [simpleviz.scene :as scene]))
 
 ;; Builds the ELK JSON graph from a validated graph. Text measurement is
 ;; injected so this namespace stays DOM-free and testable.
@@ -38,7 +39,10 @@
                       :width (cond-> (+ (js/Math.ceil w) 24)
                                world-model? (max wm/NODE-MIN-W))
                       :height (cond-> (if typed? 44 30)
-                                world-model? (+ wm/GLOBE-H wm/BAR-H))}))
+                                world-model? (+ wm/GLOBE-H wm/BAR-H)
+                                ;; the cylinder's top and bottom rims
+                                (and (not world-model?) (scene/database? (:type n)))
+                                (+ (* 2 scene/DB-RIM)))}))
         box-elk (fn box-elk [b]
                   ;; empty boxes (e.g. compare-mode removed shells) must not
                   ;; reach ELK as childless compounds — those lay out as 0×0

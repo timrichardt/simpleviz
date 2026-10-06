@@ -24,6 +24,15 @@
 
 (def ^:private BBOX-PAD 10)
 
+;; a :type "database" node is drawn as the database cylinder: an ellipse
+;; of this half-height at top and bottom, the layout adding both rims
+(def DB-RIM 6)
+
+(defn database?
+  "Is a node of type t drawn as a database cylinder?"
+  [t]
+  (= "database" (.toLowerCase (str (or t "")))))
+
 ;; the :state values a node shows as a corner mark; anything else stays an
 ;; ordinary attribute
 (def STATES #{"new" "in-progress" "blocked" "done"})
@@ -119,6 +128,7 @@
                                     :ref? (some? (ref-of node))
                                     :md-ref? (some? (ref-of node :md-ref))
                                     :world-model? (some? ms)
+                                    :database? (and (nil? ms) (database? (:type node)))
                                     ;; parsed once here, painted every frame
                                     :world-model (when (some? ms) (wm/parse ms))
                                     :state (node-state node)
