@@ -68,8 +68,11 @@
         nm (:name item)]
     (if (some? t)
       {:title (if (and (string? nm) (pos? (.-length nm))) nm t)
-       ;; a world-model node shows its :world-model itself
-       :attrs (filterv (fn [[k _]] (and (not= k "name") (not (and (= k "world-model") (:world-model? item)))))
+       ;; a world-model node shows its :world-model itself, any element its :text
+       :attrs (filterv (fn [[k _]] (and (not= k "name")
+                                        (not (and (= k "world-model") (:world-model? item)))
+                                        ;; shown inside the element already
+                                        (not (and (= k "text") (seq (:text-lines item))))))
                        (visible-attrs item))}
       nil)))
 

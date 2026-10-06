@@ -158,3 +158,12 @@
 (test "a world-model node's tooltip leaves its :world-model out"
   (fn []
     (assert/deepEqual (:attrs (hover-tip world-model-node)) [["owner" "ops"]])))
+
+(test "the tooltip leaves out a :text the element already shows"
+  (fn []
+    (assert/deepEqual (:attrs (hover-tip (assoc node-a :name "A" :attrs {"text" "hi" "owner" "ops"}
+                                                :text-lines ["hi"])))
+                      [["owner" "ops"]])
+    ;; a collapsed box doesn't show it: the tooltip does
+    (assert/deepEqual (:attrs (hover-tip {:kind "box" :id "b:g" :name "G" :attrs {"text" "hi"} :text-lines []}))
+                      [["text" "hi"]])))

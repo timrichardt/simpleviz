@@ -31,14 +31,17 @@
   (let [{:keys [nodes boxes boxes-by-name parent-of edges]} graph
         node-elk (fn [n]
                    (let [typed? (pos? (.-length (:type n)))
+                         ;; :text shows under the name and type
+                         lines (scene/text-lines (:text (:attrs n)) measure)
                          w (max (measure (:name n) NODE-FONT)
-                                (if typed? (measure (str "(" (:type n) ")") SUB-FONT) 0))
+                                (if typed? (measure (str "(" (:type n) ")") SUB-FONT) 0)
+                                (scene/text-width lines measure))
                          ;; a world-model node holds its globe and control bar
                          world-model? (some? (wm/world-model-of (:attrs n)))]
                      {:id (str "n:" (:id n))
                       :width (cond-> (+ (js/Math.ceil w) 24)
                                world-model? (max wm/NODE-MIN-W))
-                      :height (cond-> (if typed? 44 30)
+                      :height (cond-> (+ (if typed? 44 30) (scene/text-height lines))
                                 world-model? (+ wm/GLOBE-H wm/BAR-H)
                                 ;; the cylinder's top and bottom rims
                                 (and (not world-model?) (scene/database? (:type n)))
@@ -54,13 +57,22 @@
                       {:id (str "b:" (:name b))
                        :width (+ (js/Math.ceil w) (if (:collapsed b) 44 24))
                        :height (if typed? 44 30)})
+                    ;; :text shows under the header: more room on top, and
+                    ;; at least as wide as its lines
+                    (let [lines (scene/text-lines (:text (:attrs b)) measure)
+                          pad (update BOX-PADDING :top + (scene/text-height lines))]
                     {:id (str "b:" (:name b))
-                     :layoutOptions {"elk.padding" (padding-str BOX-PADDING)}
+                     :layoutOptions (cond-> {"elk.padding" (padding-str pad)}
+                                      (seq lines)
+                                      (assoc "elk.nodeSize.constraints" "[MINIMUM_SIZE]"
+                                             "elk.nodeSize.minimum"
+                                             (str "(" (+ (js/Math.ceil (scene/text-width lines measure)) 24)
+                                                  ", " (+ (:top pad) (:bottom pad)) ")")))
                      :children (mapv (fn [c]
                                        (if (.startsWith c "n:")
                                          (node-elk (get nodes (.slice c 2)))
                                          (box-elk (get boxes-by-name (.slice c 2)))))
-                                     (:components b))}))
+                                     (:components b))})))
         root-nodes (vec (filter some?
                          (mapv (fn [n] (when (nil? (get parent-of (str "n:" (:id n))))
                                          (node-elk n)))
