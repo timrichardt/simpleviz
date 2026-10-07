@@ -1,0 +1,52 @@
+;; A satellite mission planning system. Shows the world-model node (drag its
+;; globe; select it to add satellites and ground stations), database
+;; cylinders, :text inside nodes and boxes — and enough boxes for the layout
+;; menu at the top: try compact and tiled.
+{:nodes {:world     {:name "World model" :type "world-model"
+                     :text "orbits, ground stations, visibility"
+                     :world-model {:satellites      {:eo-1    {:name "EO-1" :orbit :leo :altitude 700
+                                                               :inclination 98.2 :raan 20}
+                                                     :eo-2    {:name "EO-2" :orbit :leo :altitude 700
+                                                               :inclination 98.2 :raan 20 :phase 180}
+                                                     :relay   {:name "Relay" :orbit :geo :lon 10}}
+                                   :ground-stations {:svalbard {:name "Svalbard" :lat 78.23 :lon 15.39}
+                                                     :kiruna   {:name "Kiruna" :lat 67.86 :lon 20.96
+                                                                :min-elevation 5}
+                                                     :matera   {:name "Matera" :lat 40.65 :lon 16.7}}}}
+         :portal    {:name "Customer portal" :type "frontend" :text "order imaging"}
+         :requests  {:name "Request intake" :type "service" :text "validates and prioritises orders"}
+         :planner   {:name "Planner" :type "component" :text ["builds the acquisition plan" "per orbit"]}
+         :scheduler {:name "Scheduler" :type "component" :text "fits contacts to station windows"
+                     :state :in-progress}
+         :conflicts {:name "Conflict check" :type "component"}
+         :plans     {:name "Plan archive" :type "database" :text "versioned plans"}
+         :orbits    {:name "Orbit data" :type "database" :text "TLEs, ephemerides"}
+         :fds       {:name "Flight dynamics" :type "service" :text "propagates orbits daily"}
+         :mcs       {:name "Mission control" :type "service" :text "uplinks the plan"}
+         :stations  {:name "Station network" :type "service" :text "books antenna time"}
+         :telemetry {:name "Telemetry store" :type "database"}
+         :products  {:name "Product generation" :type "service" :text "level-1 images"}
+         :catalogue {:name "Catalogue" :type "database"}}
+ :edges {[:portal :requests]     {:name "orders" :direction :->}
+         [:requests :planner]    {:name "requests" :direction :->}
+         [:planner :world]       {:name "reads" :direction :->}
+         [:planner :conflicts]   {:direction :->}
+         [:planner :plans]       {:name "stores" :direction :->}
+         [:scheduler :planner]   {:name "plans" :direction :<-}
+         [:scheduler :world]     {:name "visibility" :direction :->}
+         [:scheduler :stations]  {:name "books" :direction :->}
+         [:fds :orbits]          {:name "writes" :direction :->}
+         [:orbits :world]        {:name "feeds" :direction :->}
+         [:scheduler :mcs]       {:name "schedule" :direction :->}
+         [:mcs :telemetry]       {:name "archives" :direction :->}
+         [:telemetry :products]  {:name "raw data" :direction :->}
+         [:products :catalogue]  {:name "publishes" :direction :->}
+         [:catalogue :portal]    {:name "browse" :direction :->}}
+ :boxes {:user-segment    {:name "User segment" :type "zone" :components #{:portal :requests}
+                           :text "what customers see"}
+         :planning        {:name "Mission planning" :type "zone"
+                           :components #{:planner :scheduler :conflicts :plans :world}
+                           :text "turns orders into a conflict-free plan"}
+         :flight-dynamics {:name "Flight dynamics" :type "zone" :components #{:fds :orbits}}
+         :ground-segment  {:name "Ground segment" :type "zone" :components #{:mcs :stations :telemetry}}
+         :processing      {:name "Processing" :type "zone" :components #{:products :catalogue}}}}
